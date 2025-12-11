@@ -1,3 +1,4 @@
+const path = require('path');
 const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
@@ -8,7 +9,8 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json()); // Quan trọng: để đọc được JSON từ App gửi lên
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
 
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
@@ -17,57 +19,75 @@ const pool = new Pool({
 
 // --- 1. API ĐĂNG KÝ (Register) ---
 app.post('/api/register', async (req, res) => {
-    const { phone, password, full_name } = req.body;
+    const { email, username, password, fullName } = req.body; 
+
     try {
-        // Kiểm tra xem số điện thoại đã tồn tại chưa
-        const checkUser = await pool.query('SELECT * FROM users WHERE phone_number = $1', [phone]);
-        if (checkUser.rows.length > 0) {
-            return res.status(400).json({ status: 'error', message: 'Số điện thoại này đã được đăng ký!' });
+        // 1. Kiểm tra Email HOẶC Username đã tồn tại chưa
+        const checkExist = await pool.query(
+            'SELECT * FROM users WHERE email = $1 OR username = $2', 
+            [email, username]
+        );
+
+        if (checkExist.rows.length > 0) {
+            const user = checkExist.rows[0];
+            if (user.email === email) {
+                return res.status(409).json({ status: 'error', message: 'Email đã được sử dụng!' });
+            }
+            if (user.username === username) {
+                return res.status(409).json({ status: 'error', message: 'Tên đăng nhập đã tồn tại!' });
+            }
         }
 
-        // Mã hóa mật khẩu (Không lưu pass thô)
+        // 2. Mã hóa mật khẩu
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
 
-        // Lưu vào Database
+        // 3. Lưu vào Database
         const newUser = await pool.query(
-            'INSERT INTO users (phone_number, password_hash, full_name) VALUES ($1, $2, $3) RETURNING user_id, full_name, role',
-            [phone, hashedPassword, full_name]
+            'INSERT INTO users (email, username, password_hash, full_name) VALUES ($1, $2, $3, $4) RETURNING *',
+            [email, username, hashedPassword, fullName]
         );
 
-        res.json({ status: 'success', message: 'Đăng ký thành công!', user: newUser.rows[0] });
+        res.json({ status: 'success', user: newUser.rows[0] });
 
     } catch (err) {
         console.error(err);
-        res.status(500).json({ status: 'error', message: 'Lỗi Server: ' + err.message });
+        res.status(500).json({ status: 'error', message: 'Lỗi Server' });
     }
 });
 
 // --- 2. API ĐĂNG NHẬP (Login) ---
 app.post('/api/login', async (req, res) => {
-    const { phone, password } = req.body;
+    const { identifier, password } = req.body;
+
     try {
-        // Tìm user theo số điện thoại
-        const user = await pool.query('SELECT * FROM users WHERE phone_number = $1', [phone]);
+        // Tìm user theo email hoặc username
+        const user = await pool.query(
+            'SELECT * FROM users WHERE email = $1 OR username = $1', 
+            [identifier]
+        );
         
         if (user.rows.length === 0) {
-            return res.status(400).json({ status: 'error', message: 'Số điện thoại không tồn tại!' });
+            return res.status(400).json({ status: 'error', message: 'Tài khoản không tồn tại!' });
         }
 
-        // So sánh mật khẩu nhập vào với mật khẩu đã mã hóa
-        const validPass = await bcrypt.compare(password, user.rows[0].password_hash);
+        const dbHash = user.rows[0].password_hash;
+        const validPass = await bcrypt.compare(password, dbHash);
+        
         if (!validPass) {
-            return res.status(400).json({ status: 'error', message: 'Sai mật khẩu!' });
+            return res.status(400).json({ 
+                status: 'error', 
+                message: 'Sai mật khẩu!',
+                email: user.rows[0].email 
+            });
         }
-
-        // Đăng nhập thành công -> Trả về thông tin (trừ mật khẩu)
+        
         const userData = user.rows[0];
-        delete userData.password_hash; // Xóa pass trước khi gửi về
+        delete userData.password_hash;
 
         res.json({ status: 'success', message: 'Đăng nhập thành công!', user: userData });
 
     } catch (err) {
-        console.error(err);
         res.status(500).json({ status: 'error', message: 'Lỗi Server' });
     }
 });
@@ -79,6 +99,58 @@ app.get('/api/songs', async (req, res) => {
         res.json(result.rows);
     } catch (err) {
         res.status(500).json({ error: err.message });
+    }
+});
+
+// --- 4. API ĐỒNG BỘ MẬT KHẨU
+app.post('/api/sync-password', async (req, res) => {
+    const { identifier, password } = req.body;
+    const email = identifier;
+    const newPassword = password;
+
+    try {
+        if (!email || !newPassword) {
+            return res.status(400).json({ status: 'error', message: 'Thiếu thông tin đồng bộ' });
+        }
+
+        // 1. Mã hóa mật khẩu mới
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+        // 2. Cập nhật vào Database
+        const updateRes = await pool.query(
+            'UPDATE users SET password_hash = $1 WHERE email = $2 RETURNING *',
+            [hashedPassword, email]
+        );
+
+        if (updateRes.rowCount === 0) {
+            return res.status(404).json({ status: 'error', message: 'Email không tồn tại' });
+        }
+
+        const userData = updateRes.rows[0];
+        delete userData.password_hash;
+        
+        res.json({ status: 'success', message: 'Đồng bộ thành công!', user: userData });
+
+    } catch (err) {
+        res.status(500).json({ status: 'error', message: 'Lỗi Server khi đồng bộ' });
+    }
+});
+
+// --- API KIỂM TRA EMAIL TỒN TẠI ---
+app.post('/api/check-email', async (req, res) => {
+    const { email } = req.body;
+    try {
+        const user = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+        
+        if (user.rows.length > 0) {
+            res.json({ exists: true });
+        } else {
+            res.json({ exists: false });
+        }
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Lỗi server' });
     }
 });
 
