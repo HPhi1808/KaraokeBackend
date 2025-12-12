@@ -1,0 +1,163 @@
+<div class="card shadow border-0 mb-4">
+    <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+        <h5 class="m-0 font-weight-bold text-primary">Danh sách Người dùng</h5>
+        <div class="input-group" style="width: 300px;">
+            <input type="text" id="searchUser" class="form-control" placeholder="Tìm tên, email...">
+            <button class="btn btn-primary">
+                <i class="bi bi-search"></i>
+            </button>
+        </div>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="bg-light">
+                    <tr>
+                        <th class="text-center">Avatar</th>
+                        <th>Họ tên</th>
+                        <th>Username</th>
+                        <th>Email</th>
+                        <th class="text-center">Vai trò</th>
+                        <th>Ngày tạo</th>
+                        <th class="text-center">Hành động</th>
+                    </tr>
+                </thead>
+                <tbody id="usersTableBody">
+                    </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Hàm load users từ API
+    async function loadUsers() {
+
+        const tbody = document.getElementById('usersTableBody');
+        if (!tbody) {
+            return;
+        }
+
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4"><div class="spinner-border text-primary"></div> Đang tải dữ liệu...</td></tr>';
+
+        // Gọi API (đảm bảo hàm api() đã có bên base.js)
+        const data = await api('/api/admin/users');
+
+        if (!data || data.status === 'error' || data.error) {
+            tbody.innerHTML = `<tr><td colspan="7" class="text-center text-danger py-4">
+                Không tải được dữ liệu<br>${data?.message || data?.error || 'Lỗi kết nối'}
+            </td></tr>`;
+            return;
+        }
+
+        // Nếu mảng rỗng
+        if (Array.isArray(data) && data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4">Chưa có người dùng nào.</td></tr>';
+            return;
+        }
+
+        // Render dữ liệu
+        tbody.innerHTML = '';
+        const list = Array.isArray(data) ? data : (data.users || []);
+
+        list.forEach(u => {
+            const tr = document.createElement('tr');
+
+            // Lấy current user id từ token để so sánh (không cho tự xóa mình)
+            let currentUserId = null;
+            let currentUserRole = '';
+            try {
+                const token = localStorage.getItem('access_token');
+                if(token) {
+                    const payload = JSON.parse(atob(token.split('.')[1]));
+                    currentUserId = payload.user_id;
+                    currentUserRole = payload.role;
+                }
+            } catch (e) {}
+
+            let actionButtons = '';
+            
+            // Logic nút bấm: Không thao tác với chính mình
+            if (u.id !== currentUserId) {
+                // Own thao tác được tất cả, Admin chỉ thao tác User
+                const canEdit = currentUserRole === 'own' || (currentUserRole === 'admin' && u.role === 'user');
+
+                if (canEdit) {
+                    // Nút đổi quyền
+                    // Own không thể bị đổi quyền bởi Admin (logic đã check ở backend, check thêm ở đây cho đẹp UI)
+                    if (u.role !== 'own') {
+                        const btnClass = u.role === 'admin' ? 'btn-secondary' : 'btn-warning';
+                        const btnText = u.role === 'admin' ? 'Hạ User' : 'Lên Admin';
+                        actionButtons += `
+                            <button class="btn btn-sm ${btnClass} me-1" onclick="toggleRole(${u.id},'${u.role}')">
+                                ${btnText}
+                            </button>`;
+                    }
+                    
+                    // Nút xóa
+                    actionButtons += `<button class="btn btn-sm btn-danger" onclick="deleteUser(${u.id})"><i class="bi bi-trash"></i></button>`;
+                }
+            } else {
+                actionButtons = '<span class="badge bg-secondary">Bạn</span>';
+            }
+
+            tr.innerHTML = `
+              <td class="text-center">
+                <img src="${u.avatar_url || 'https://via.placeholder.com/50'}" class="rounded-circle border" width="40" height="40" style="object-fit: cover;">
+              </td>
+              <td class="fw-bold text-dark">${u.full_name || 'Chưa đặt tên'}</td>
+              <td class="text-muted">@${u.username}</td>
+              <td>${u.email}</td>
+              <td class="text-center">
+                <span class="badge ${u.role==='own'?'bg-dark':u.role==='admin'?'bg-danger':'bg-success'}">
+                  ${u.role.toUpperCase()}
+                </span>
+              </td>
+              <td>${new Date(u.created_at).toLocaleDateString('vi-VN')}</td>
+              <td class="text-center">
+                ${actionButtons}
+              </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    // Tìm kiếm realtime
+    document.getElementById('searchUser')?.addEventListener('input', function(e) {
+        const kw = e.target.value.toLowerCase();
+        document.querySelectorAll('#usersTableBody tr').forEach(row => {
+            const text = row.innerText.toLowerCase();
+            row.style.display = text.includes(kw) ? '' : 'none';
+        });
+    });
+
+    // Đổi role
+    async function toggleRole(id, currentRole) {
+        const newRole = currentRole === 'admin' ? 'user' : 'admin';
+        if (!confirm(`Bạn muốn đổi quyền user này thành ${newRole.toUpperCase()}?`)) return;
+        
+        const res = await api(`/api/admin/users/${id}/role`, {
+            method: 'PATCH',
+            body: JSON.stringify({ role: newRole })
+        });
+        
+        if (res && (res.status === 'success' || res.user)) {
+            loadUsers();
+        } else {
+            alert('Lỗi: ' + (res?.message || 'Không thể đổi quyền'));
+        }
+    }
+
+    // Xóa user
+    async function deleteUser(id) {
+        if (!confirm('Hành động này không thể hoàn tác. XÓA người dùng này?')) return;
+        const res = await api(`/api/admin/users/${id}`, { method: 'DELETE' });
+        if (res && res.status === 'success') {
+            loadUsers();
+        } else {
+             alert('Lỗi: ' + (res?.message || 'Không xóa được'));
+        }
+    }
+
+    loadUsers();
+</script>
