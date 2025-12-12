@@ -23,24 +23,65 @@
                     </tr>
                 </thead>
                 <tbody id="usersTableBody">
-                    </tbody>
+                </tbody>
             </table>
         </div>
     </div>
 </div>
 
+<div class="modal fade" id="messageModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-warning text-dark">
+                <h5 class="modal-title"><i class="bi bi-envelope-exclamation"></i> Gửi Cảnh Báo/Tin Nhắn</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="msgForm">
+                    <input type="hidden" id="msgUserId">
+                    <div class="mb-3">
+                        <label class="form-label">Người nhận:</label>
+                        <input type="text" class="form-control" id="msgUserName" disabled readonly>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Loại tin nhắn</label>
+                        <select class="form-select" id="msgType">
+                            <option value="warning">⚠️ Cảnh báo vi phạm</option>
+                            <option value="info">ℹ️ Thông báo hệ thống</option>
+                            <option value="success">🎁 Quà tặng/Khuyến khích</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Tiêu đề</label>
+                        <input type="text" class="form-control" id="msgTitle"
+                            placeholder="Ví dụ: Cảnh báo vi phạm cộng đồng" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Nội dung chi tiết</label>
+                        <textarea class="form-control" id="msgContent" rows="4" placeholder="Nhập nội dung nhắc nhở..."
+                            required></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Hủy</button>
+                <button type="button" class="btn btn-primary" onclick="submitMessage()">Gửi ngay</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
+    // Định nghĩa biến toàn cục để lưu role hiện tại
+    let currentRoleGlobal = '';
+
     // Hàm load users từ API
     async function loadUsers() {
-
         const tbody = document.getElementById('usersTableBody');
-        if (!tbody) {
-            return;
-        }
+        if (!tbody) return;
 
         tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4"><div class="spinner-border text-primary"></div> Đang tải dữ liệu...</td></tr>';
 
-        // Gọi API (đảm bảo hàm api() đã có bên base.js)
         const data = await api('/api/admin/users');
 
         if (!data || data.status === 'error' || data.error) {
@@ -50,52 +91,63 @@
             return;
         }
 
-        // Nếu mảng rỗng
         if (Array.isArray(data) && data.length === 0) {
             tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4">Chưa có người dùng nào.</td></tr>';
             return;
         }
 
-        // Render dữ liệu
         tbody.innerHTML = '';
         const list = Array.isArray(data) ? data : (data.users || []);
 
+        // Lấy thông tin người đang đăng nhập
+        let currentUserId = null;
+        let currentUserRole = '';
+        try {
+            const token = localStorage.getItem('access_token');
+            if (token) {
+                const payload = JSON.parse(atob(token.split('.')[1]));
+                currentUserId = payload.user_id;
+                currentUserRole = payload.role;
+                currentRoleGlobal = currentUserRole; // Lưu lại để dùng nếu cần
+            }
+        } catch (e) { }
+
         list.forEach(u => {
+            // === LOGIC MỚI: ẨN OWNER NẾU KHÔNG PHẢI LÀ OWNER ===
+            // Nếu người xem không phải là 'own' MÀ user trong danh sách là 'own' -> Bỏ qua
+            if (u.role === 'own' && currentUserRole !== 'own') {
+                return; 
+            }
+
             const tr = document.createElement('tr');
-
-            // Lấy current user id từ token để so sánh (không cho tự xóa mình)
-            let currentUserId = null;
-            let currentUserRole = '';
-            try {
-                const token = localStorage.getItem('access_token');
-                if(token) {
-                    const payload = JSON.parse(atob(token.split('.')[1]));
-                    currentUserId = payload.user_id;
-                    currentUserRole = payload.role;
-                }
-            } catch (e) {}
-
             let actionButtons = '';
-            
-            // Logic nút bấm: Không thao tác với chính mình
+
+            // Logic nút bấm
             if (u.id !== currentUserId) {
-                // Own thao tác được tất cả, Admin chỉ thao tác User
                 const canEdit = currentUserRole === 'own' || (currentUserRole === 'admin' && u.role === 'user');
 
                 if (canEdit) {
-                    // Nút đổi quyền
-                    // Own không thể bị đổi quyền bởi Admin (logic đã check ở backend, check thêm ở đây cho đẹp UI)
                     if (u.role !== 'own') {
                         const btnClass = u.role === 'admin' ? 'btn-secondary' : 'btn-warning';
                         const btnText = u.role === 'admin' ? 'Hạ User' : 'Lên Admin';
+                        // Gắn hàm toggleRole vào window bên dưới
                         actionButtons += `
-                            <button class="btn btn-sm ${btnClass} me-1" onclick="toggleRole(${u.id},'${u.role}')">
+                            <button class="btn btn-sm ${btnClass} me-1" onclick="window.toggleRole(${u.id},'${u.role}')">
                                 ${btnText}
                             </button>`;
                     }
+
+                    actionButtons += `<button class="btn btn-sm btn-danger" onclick="window.deleteUser(${u.id})"><i class="bi bi-trash"></i></button>`;
+
+                    // Xử lý tên có dấu nháy đơn (ví dụ O'Neil) để tránh lỗi JS
+                    const safeName = (u.full_name || u.username).replace(/'/g, "\\'");
                     
-                    // Nút xóa
-                    actionButtons += `<button class="btn btn-sm btn-danger" onclick="deleteUser(${u.id})"><i class="bi bi-trash"></i></button>`;
+                    actionButtons += `
+                        <button class="btn btn-sm btn-info text-white me-1" 
+                        onclick="window.openMsgModal(${u.id}, '${safeName}')" 
+                        title="Gửi tin nhắn">
+                        <i class="bi bi-envelope"></i>
+                    </button>`;
                 }
             } else {
                 actionButtons = '<span class="badge bg-secondary">Bạn</span>';
@@ -109,7 +161,7 @@
               <td class="text-muted">@${u.username}</td>
               <td>${u.email}</td>
               <td class="text-center">
-                <span class="badge ${u.role==='own'?'bg-dark':u.role==='admin'?'bg-danger':'bg-success'}">
+                <span class="badge ${u.role === 'own' ? 'bg-dark' : u.role === 'admin' ? 'bg-danger' : 'bg-success'}">
                   ${u.role.toUpperCase()}
                 </span>
               </td>
@@ -122,8 +174,8 @@
         });
     }
 
-    // Tìm kiếm realtime
-    document.getElementById('searchUser')?.addEventListener('input', function(e) {
+    // Tìm kiếm
+    document.getElementById('searchUser')?.addEventListener('input', function (e) {
         const kw = e.target.value.toLowerCase();
         document.querySelectorAll('#usersTableBody tr').forEach(row => {
             const text = row.innerText.toLowerCase();
@@ -131,33 +183,95 @@
         });
     });
 
-    // Đổi role
-    async function toggleRole(id, currentRole) {
+    // === GẮN CÁC HÀM VÀO WINDOW ĐỂ GỌI ĐƯỢC TỪ HTML (SỬA LỖI KHÔNG CLICK ĐƯỢC) ===
+    
+    window.toggleRole = async function(id, currentRole) {
         const newRole = currentRole === 'admin' ? 'user' : 'admin';
         if (!confirm(`Bạn muốn đổi quyền user này thành ${newRole.toUpperCase()}?`)) return;
-        
+
         const res = await api(`/api/admin/users/${id}/role`, {
             method: 'PATCH',
             body: JSON.stringify({ role: newRole })
         });
-        
+
         if (res && (res.status === 'success' || res.user)) {
             loadUsers();
         } else {
             alert('Lỗi: ' + (res?.message || 'Không thể đổi quyền'));
         }
-    }
+    };
 
-    // Xóa user
-    async function deleteUser(id) {
+    window.deleteUser = async function(id) {
         if (!confirm('Hành động này không thể hoàn tác. XÓA người dùng này?')) return;
         const res = await api(`/api/admin/users/${id}`, { method: 'DELETE' });
         if (res && res.status === 'success') {
             loadUsers();
         } else {
-             alert('Lỗi: ' + (res?.message || 'Không xóa được'));
+            alert('Lỗi: ' + (res?.message || 'Không xóa được'));
         }
-    }
+    };
 
+    window.openMsgModal = function(userId, userName) {
+        console.log("Opening modal for:", userId, userName); // Debug
+        
+        const userIdInput = document.getElementById('msgUserId');
+        const userNameInput = document.getElementById('msgUserName');
+        
+        if(!userIdInput || !userNameInput) {
+            console.error("Không tìm thấy input trong modal");
+            return;
+        }
+
+        userIdInput.value = userId;
+        userNameInput.value = userName;
+        document.getElementById('msgTitle').value = '';
+        document.getElementById('msgContent').value = '';
+
+        // Kiểm tra biến bootstrap
+        if (typeof bootstrap !== 'undefined') {
+            const modalEl = document.getElementById('messageModal');
+            const modal = new bootstrap.Modal(modalEl);
+            modal.show();
+        } else {
+            alert("Lỗi: Bootstrap JS chưa được load!");
+        }
+    };
+
+    window.submitMessage = async function() {
+        const userId = document.getElementById('msgUserId').value;
+        const title = document.getElementById('msgTitle').value;
+        const message = document.getElementById('msgContent').value;
+        const type = document.getElementById('msgType').value;
+
+        if (!title || !message) {
+            alert('Vui lòng nhập đủ tiêu đề và nội dung!');
+            return;
+        }
+
+        const btn = document.querySelector('#messageModal .btn-primary');
+        const originalText = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<div class="spinner-border spinner-border-sm"></div> Đang gửi...';
+
+        const res = await api(`/api/admin/users/${userId}/message`, {
+            method: 'POST',
+            body: JSON.stringify({ title, message, type })
+        });
+
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+
+        if (res && res.status === 'success') {
+            alert('Đã gửi tin nhắn thành công!');
+            // Đóng modal
+            const modalEl = document.getElementById('messageModal');
+            const modal = bootstrap.Modal.getInstance(modalEl);
+            modal.hide();
+        } else {
+            alert('Lỗi: ' + (res?.message || 'Không gửi được'));
+        }
+    };
+
+    // Chạy hàm load
     loadUsers();
 </script>

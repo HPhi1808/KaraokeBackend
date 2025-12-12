@@ -44,4 +44,27 @@ router.delete('/:id', verifyToken, requireOwn, async (req, res) => {
   }
 });
 
+// Gửi tin nhắn tới user
+router.post('/:id/message', verifyToken, requireAdmin, async (req, res) => {
+    const { id } = req.params; // ID của người nhận
+    const { title, message, type } = req.body;
+
+    if (!title || !message) {
+        return res.status(400).json({ status: 'error', message: 'Thiếu tiêu đề hoặc nội dung' });
+    }
+
+    try {
+        await pool.query(
+            `INSERT INTO notifications (user_id, title, message, type) 
+             VALUES ($1, $2, $3, $4)`,
+            [id, title, message, type || 'warning']
+        );
+
+        res.json({ status: 'success', message: 'Đã gửi thông báo thành công' });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ status: 'error', message: 'Lỗi server khi gửi tin nhắn' });
+    }
+});
+
 module.exports = router;
