@@ -96,7 +96,7 @@ router.post('/login', async (req, res) => {
         const user = result.rows[0];
         const validPassword = await bcrypt.compare(password, user.password_hash);
         if (!validPassword) {
-            return res.status(400).json({ status: 'error', message: 'Sai mật khẩu!' });
+            return res.status(400).json({ status: 'error', message: 'Sai mật khẩu!',email: user.email });
         }
 
         // Tạo token
