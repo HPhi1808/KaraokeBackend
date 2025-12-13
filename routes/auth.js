@@ -23,9 +23,9 @@ const generateRefreshToken = async (userId, role) => {
 
     // 2. Quyết định thời gian hết hạn dựa vào Role
     let expiryInterval = '90 days'; // Mặc định cho User/Guest
-    
+
     if (role === 'admin' || role === 'own') {
-        expiryInterval = '1 day'; // Admin chỉ cho 24h
+        expiryInterval = '1 day';
     }
 
     // 3. Thêm mới với thời gian hết hạn cụ thể
@@ -101,7 +101,7 @@ router.post('/login', async (req, res) => {
 
     try {
         const result = await pool.query(
-            `SELECT id, username, email, full_name, role, avatar_url, bio, password_hash 
+            `SELECT id, username, email, full_name, role, avatar_url, bio, password_hash, locked_until
              FROM users WHERE email = $1 OR username = $1`,
             [identifier]
         );
@@ -116,15 +116,22 @@ router.post('/login', async (req, res) => {
             return res.status(400).json({ status: 'error', message: 'Sai mật khẩu!' });
         }
 
+        if (user.locked_until && new Date(user.locked_until) > new Date()) {
+            return res.status(403).json({
+                status: 'error',
+                message: `Tài khoản của bạn đã bị khoá đến: ${new Date(user.locked_until).toLocaleString('vi-VN')} do vi phạm tiêu chuẩn cộng đồng.`
+            });
+        }
+
         // === [LOGIC MỚI] CHẶN ADMIN ĐĂNG NHẬP TỪ APP ===
         if ((user.role === 'admin' || user.role === 'own')) {
             // Nếu là Admin, bắt buộc phải có cờ platform = 'web_admin'
             if (platform !== 'web_admin') {
                 // Trả về lỗi 403 Forbidden ngay lập tức
                 // KHÔNG tạo token, KHÔNG ghi vào DB
-                return res.status(403).json({ 
-                    status: 'error', 
-                    message: 'Tài khoản Admin vui lòng đăng nhập trên trang quản trị Web!' 
+                return res.status(403).json({
+                    status: 'error',
+                    message: 'Tài khoản Admin vui lòng đăng nhập trên trang quản trị Web!'
                 });
             }
         }
@@ -283,7 +290,7 @@ router.post('/guest-login', async (req, res) => {
         const randomId = crypto.randomBytes(8).toString('hex');
         const guestUsername = `guest_${randomId}`;
         const guestEmail = `${guestUsername}@anon.com`; // Email giả
-        
+
         // 2. Tạo password ngẫu nhiên (dù khách không dùng để đăng nhập lại)
         const randomPass = crypto.randomBytes(16).toString('hex');
         const salt = await bcrypt.genSalt(10);
@@ -305,7 +312,7 @@ router.post('/guest-login', async (req, res) => {
             JWT_SECRET,
             { expiresIn: '30d' } // Cho khách dùng lâu hơn (30 ngày)
         );
-        
+
         // Tạo Refresh Token
         const refreshToken = await generateRefreshToken(user.id);
 
@@ -332,9 +339,9 @@ router.delete('/delete-guest', verifyToken, async (req, res) => {
 
         // BƯỚC BẢO MẬT: Kiểm tra xem có đúng là Guest không?
         if (role !== 'guest') {
-            return res.status(403).json({ 
-                status: 'error', 
-                message: 'Chỉ tài khoản Khách mới được phép sử dụng API này!' 
+            return res.status(403).json({
+                status: 'error',
+                message: 'Chỉ tài khoản Khách mới được phép sử dụng API này!'
             });
         }
 

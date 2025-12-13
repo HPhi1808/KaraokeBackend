@@ -100,30 +100,36 @@
   </div>
 
   <script>
-    // 1. Kiểm tra đăng nhập ngay lập tức
-    const accessToken = localStorage.getItem('access_token');
-    const refreshToken = localStorage.getItem('refresh_token');
-    const adminName = localStorage.getItem('admin_name');
+    // --- 1. KHAI BÁO BIẾN TOÀN CỤC ---
+    let isRefreshing = false;
 
-    if (!accessToken) {
-      // SỬA LẠI ĐƯỜNG DẪN: Chuyển về trang gốc '/'
-      window.location.href = '/';
+    // --- 2. KIỂM TRA ĐĂNG NHẬP (CHẠY NGAY LẬP TỨC) ---
+    if (!localStorage.getItem('access_token')) {
+      window.location.replace('/');
     }
 
     // Hiển thị tên Admin
+    const adminName = localStorage.getItem('admin_name');
     if (adminName) {
       document.getElementById('adminName').innerText = adminName;
     }
 
-    // --- HÀM ĐĂNG XUẤT (GỌI API XÓA TOKEN) ---
+    // --- 3. HÀM XỬ LÝ LOGOUT CỤC BỘ
+    function handleLogout() {
+        localStorage.clear();
+        window.location.replace('/');
+    }
+
+    // --- 4. HÀM ĐĂNG XUẤT CHỦ ĐỘNG
     async function logout() {
       const btn = document.getElementById('btnLogout');
       btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
       btn.disabled = true;
 
+      const refreshToken = localStorage.getItem('refresh_token');
+
       try {
         if (refreshToken) {
-          // Gọi API để server xóa token khỏi DB
           await fetch('/api/auth/logout', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -131,43 +137,86 @@
           });
         }
       } catch (err) {
-        console.error("Lỗi khi gọi API logout:", err);
+        console.error("Lỗi logout:", err);
       } finally {
-        // Xóa sạch dữ liệu LocalStorage
-        localStorage.clear();
-        window.location.replace('/');
+        handleLogout(); // Gọi hàm xử lý dọn dẹp và chuyển trang
       }
     }
 
-    // --- HÀM GỌI API CHUNG (CÓ XỬ LÝ 401/403) ---
+    // --- 5. HÀM GỌI API CHUNG (CÓ SILENT REFRESH) ---
     async function api(url, options = {}) {
       try {
+        // QUAN TRỌNG: Luôn lấy token mới nhất từ localStorage
+        const currentToken = localStorage.getItem('access_token');
+        
         const res = await fetch(url, {
           ...options,
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${accessToken}`,
+            'Authorization': `Bearer ${currentToken}`,
             ...options.headers
           }
         });
 
-        if (res.status === 401 || res.status === 403) {
-          // Token hết hạn hoặc không quyền -> Logout
-          localStorage.clear();
-          // SỬA LẠI ĐƯỜNG DẪN: Chuyển về trang gốc '/'
-          window.location.href = '/';
+        // --- LOGIC SILENT REFRESH ---
+        if (res.status === 401 && !isRefreshing) {
+          console.log("Token hết hạn, đang thử gia hạn (Silent Refresh)...");
+          isRefreshing = true;
+
+          const rfToken = localStorage.getItem('refresh_token');
+          if (!rfToken) {
+            handleLogout();
+            return null;
+          }
+
+          // Gọi API Refresh
+          const refreshRes = await fetch('/api/auth/refresh', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refresh_token: rfToken })
+          });
+
+          if (refreshRes.ok) {
+            const data = await refreshRes.json();
+            
+            // Lưu Access Token mới
+            localStorage.setItem('access_token', data.access_token);
+            console.log("Gia hạn thành công!");
+
+            // Reset cờ
+            isRefreshing = false;
+
+            // Gọi đệ quy lại chính hàm api() này để thực hiện lại request vừa thất bại
+            return await api(url, options); 
+
+          } else {
+            // Refresh thất bại, logout
+            console.warn("Gia hạn thất bại -> Đăng xuất");
+            handleLogout();
+            return null;
+          }
+        }
+
+        // Nếu lỗi 403 (Không quyền)
+        if (res.status === 403) {
+          console.warn("Không đủ quyền thực hiện thao tác này (403)");
           return null;
         }
 
         const data = await res.json();
         return data;
+
       } catch (err) {
         console.error("API Error:", err);
         return null;
+      } finally {
+        if (isRefreshing && !localStorage.getItem('access_token')) {
+             isRefreshing = false;
+        }
       }
     }
 
-    // --- HÀM LOAD TRANG CON (SPA) ---
+    // --- 6. HÀM LOAD TRANG CON
     async function loadPage(page) {
       const content = document.getElementById('pageContent');
       content.innerHTML = '<div class="text-center py-5"><div class="spinner-border text-primary"></div><div class="mt-2">Đang tải dữ liệu...</div></div>';
@@ -182,26 +231,28 @@
         // Reset hàm init của trang trước
         window.initCurrentPage = null;
 
-        // Active menu
         document.querySelectorAll('.sidebar .nav-link').forEach(l => l.classList.remove('active'));
-        document.querySelector(`[onclick="loadPage('${page}')"]`)?.classList.add('active');
+        // Tìm thẻ a có chứa tên file trong onclick
+        const activeLink = document.querySelector(`.sidebar .nav-link[onclick*="'${page}'"]`);
+        if (activeLink) activeLink.classList.add('active');
 
-        // Chạy script trong trang vừa load (Quan trọng để trang con hoạt động)
+        // Chạy script trong trang vừa load
         const scripts = content.querySelectorAll('script');
         for (const script of scripts) {
           const newScript = document.createElement('script');
           newScript.textContent = script.textContent;
           document.body.appendChild(newScript);
-          script.remove(); // Xóa thẻ cũ để tránh rác
+          script.remove(); 
         }
       } catch (err) {
         content.innerHTML = `<div class="alert alert-danger m-4">Lỗi tải trang: ${err.message}</div>`;
       }
     }
 
-    // Mặc định load trang Users đầu tiên
+    // Mặc định load trang Users
     loadPage('users.html');
-  </script>
+</script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 
 </html>

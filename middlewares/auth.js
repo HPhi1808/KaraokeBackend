@@ -1,11 +1,14 @@
+// middlewares/auth.js
 const jwt = require('jsonwebtoken');
+const pool = require('../config/db'); 
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
 if (!JWT_SECRET) {
   throw new Error('JWT_SECRET không được để trống trong .env!');
 }
-const verifyToken = (req, res, next) => {
+
+const verifyToken = async (req, res, next) => {
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -19,7 +22,24 @@ const verifyToken = (req, res, next) => {
 
     try {
         const decoded = jwt.verify(token, JWT_SECRET);
-        req.user = decoded; // chứa { user_id, role }
+        
+        // Chỉ kiểm tra Database nếu là Admin hoặc Owner
+        if (decoded.role === 'admin' || decoded.role === 'own') {
+            const sessionCheck = await pool.query(
+                'SELECT 1 FROM refresh_tokens WHERE user_id = $1 LIMIT 1',
+                [decoded.user_id]
+            );
+
+            if (sessionCheck.rows.length === 0) {
+                return res.status(401).json({ 
+                    status: 'error', 
+                    message: 'Phiên quản trị đã bị hủy từ phía Server' 
+                });
+            }
+        }
+        
+
+        req.user = decoded; 
         next();
     } catch (err) {
         return res.status(403).json({
@@ -29,9 +49,8 @@ const verifyToken = (req, res, next) => {
     }
 };
 
-// middlewares/auth.js
 const requireAdmin = (req, res, next) => {
-  if (req.user.role === 'own') return next();  // Own có quyền full
+  if (req.user.role === 'own') return next(); 
   if (req.user.role !== 'admin') {
     return res.status(403).json({ status: 'error', message: 'Chỉ admin mới có quyền' });
   }

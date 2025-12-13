@@ -23,7 +23,7 @@
                     </tr>
                 </thead>
                 <tbody id="usersTableBody">
-                    </tbody>
+                </tbody>
             </table>
         </div>
     </div>
@@ -53,11 +53,13 @@
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Tiêu đề</label>
-                        <input type="text" class="form-control" id="msgTitle" placeholder="Ví dụ: Cảnh báo vi phạm" required>
+                        <input type="text" class="form-control" id="msgTitle" placeholder="Ví dụ: Cảnh báo vi phạm"
+                            required>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Nội dung chi tiết</label>
-                        <textarea class="form-control" id="msgContent" rows="4" placeholder="Nhập nội dung..." required></textarea>
+                        <textarea class="form-control" id="msgContent" rows="4" placeholder="Nhập nội dung..."
+                            required></textarea>
                     </div>
                 </form>
             </div>
@@ -69,11 +71,61 @@
     </div>
 </div>
 
+<div class="modal fade" id="lockModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title"><i class="bi bi-lock-fill"></i> Khoá Tài Khoản</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Bạn đang thao tác với user: <strong id="lockUserName"></strong></p>
+                <input type="hidden" id="lockUserId">
+
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Chọn thời gian khoá:</label>
+                    <div class="list-group">
+                        <label class="list-group-item">
+                            <input class="form-check-input me-1" type="radio" name="lockDuration" value="1h" checked>
+                            Khoá 1 Giờ
+                        </label>
+                        <label class="list-group-item">
+                            <input class="form-check-input me-1" type="radio" name="lockDuration" value="24h">
+                            Khoá 24 Giờ (1 ngày)
+                        </label>
+                        <label class="list-group-item">
+                            <input class="form-check-input me-1" type="radio" name="lockDuration" value="7d">
+                            Khoá 7 Ngày
+                        </label>
+                        <label class="list-group-item">
+                            <input class="form-check-input me-1" type="radio" name="lockDuration" value="30d">
+                            Khoá 30 Ngày
+                        </label>
+                        <label class="list-group-item list-group-item-danger">
+                            <input class="form-check-input me-1" type="radio" name="lockDuration" value="forever">
+                            Khoá Vĩnh Viễn (Cấm cửa)
+                        </label>
+                        <label class="list-group-item list-group-item-success">
+                            <input class="form-check-input me-1" type="radio" name="lockDuration" value="unlock">
+                            🔓 MỞ KHOÁ (User hoạt động lại)
+                        </label>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Hủy</button>
+                <button type="button" class="btn btn-danger" onclick="window.submitLock()">Xác nhận</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
 <script>
     // --- 1. ĐỊNH NGHĨA CÁC HÀM HÀNH ĐỘNG ---
 
-    window.toggleRole = async function(id, currentRole) {
-        // Chỉ cho phép đổi user <-> admin, không đổi guest
+    window.toggleRole = async function (id, currentRole) {
         const newRole = currentRole === 'admin' ? 'user' : 'admin';
         if (!confirm(`Bạn muốn đổi quyền user này thành ${newRole.toUpperCase()}?`)) return;
 
@@ -83,13 +135,13 @@
         });
 
         if (res && (res.status === 'success' || res.user)) {
-            window.initUsers(); 
+            window.initUsers();
         } else {
             alert('Lỗi: ' + (res?.message || 'Không thể đổi quyền'));
         }
     };
 
-    window.deleteUser = async function(id) {
+    window.deleteUser = async function (id) {
         if (!confirm('Hành động này không thể hoàn tác. XÓA người dùng này?')) return;
         const res = await api(`/api/admin/users/${id}`, { method: 'DELETE' });
         if (res && res.status === 'success') {
@@ -99,20 +151,28 @@
         }
     };
 
-    window.openMsgModal = function(userId, userName) {
-        document.getElementById('msgUserId').value = userId;
-        document.getElementById('msgUserName').value = userName;
+    window.openMsgModal = function (userId, userName) {
+        const idInput = document.getElementById('msgUserId');
+        const nameInput = document.getElementById('msgUserName');
+
+        if (idInput) idInput.value = userId;
+        if (nameInput) nameInput.value = userName;
+
         document.getElementById('msgTitle').value = '';
         document.getElementById('msgContent').value = '';
 
-        if (typeof bootstrap !== 'undefined') {
+        const bs = window.bootstrap || (typeof bootstrap !== 'undefined' ? bootstrap : null);
+        if (bs) {
             const modalEl = document.getElementById('messageModal');
-            const modal = new bootstrap.Modal(modalEl);
+            let modal = bs.Modal.getInstance(modalEl);
+            if (!modal) modal = new bs.Modal(modalEl);
             modal.show();
+        } else {
+            alert("Lỗi: Không tìm thấy thư viện Bootstrap JS!");
         }
     };
 
-    window.submitMessage = async function() {
+    window.submitMessage = async function () {
         const userId = document.getElementById('msgUserId').value;
         const title = document.getElementById('msgTitle').value;
         const message = document.getElementById('msgContent').value;
@@ -146,12 +206,63 @@
         }
     };
 
+    // --- [SỬA ĐỔI] HÀM MỞ MODAL KHOÁ ---
+    // Thêm tham số isLocked để biết user đang bị khoá hay không
+    window.openLockModal = function (id, name, isLocked) {
+        document.getElementById('lockUserId').value = id;
+        document.getElementById('lockUserName').innerText = name;
+
+        // LOGIC CHỌN MẶC ĐỊNH THÔNG MINH
+        if (isLocked) {
+            // Nếu đang bị khoá -> Chọn sẵn nút "Mở khoá" (value="unlock")
+            const unlockRadio = document.querySelector('input[name="lockDuration"][value="unlock"]');
+            if (unlockRadio) unlockRadio.checked = true;
+        } else {
+            // Nếu đang bình thường -> Chọn sẵn nút "Khoá 24h"
+            const lock24h = document.querySelector('input[name="lockDuration"][value="24h"]');
+            if (lock24h) lock24h.checked = true;
+        }
+
+        if (typeof bootstrap !== 'undefined') {
+            const modalEl = document.getElementById('lockModal');
+            const modal = new bootstrap.Modal(modalEl);
+            modal.show();
+        }
+    };
+
+    window.submitLock = async function () {
+        const userId = document.getElementById('lockUserId').value;
+        const duration = document.querySelector('input[name="lockDuration"]:checked').value;
+
+        const btn = document.querySelector('#lockModal .btn-danger');
+        const oldText = btn.innerText;
+        btn.innerText = 'Đang xử lý...';
+        btn.disabled = true;
+
+        const res = await api(`/api/admin/users/${userId}/lock`, {
+            method: 'POST',
+            body: JSON.stringify({ duration })
+        });
+
+        btn.innerText = oldText;
+        btn.disabled = false;
+
+        if (res && res.status === 'success') {
+            alert(res.message);
+            const modalEl = document.getElementById('lockModal');
+            const modal = bootstrap.Modal.getInstance(modalEl);
+            modal.hide();
+            window.initUsers(); 
+        } else {
+            alert('Lỗi: ' + (res?.message || 'Thất bại'));
+        }
+    }
+
     // --- 2. HÀM INIT CHÍNH ---
-    window.initUsers = async function() {
-        // A. Logic tìm kiếm
+    window.initUsers = async function () {
         const searchInput = document.getElementById('searchUser');
-        if(searchInput) {
-            searchInput.oninput = function(e) {
+        if (searchInput) {
+            searchInput.oninput = function (e) {
                 const kw = e.target.value.toLowerCase();
                 document.querySelectorAll('#usersTableBody tr').forEach(row => {
                     const text = row.innerText.toLowerCase();
@@ -160,7 +271,6 @@
             };
         }
 
-        // B. Logic tải dữ liệu
         const tbody = document.getElementById('usersTableBody');
         if (!tbody) return;
 
@@ -197,17 +307,19 @@
         list.forEach(u => {
             if (u.role === 'own' && currentUserRole !== 'own') return;
 
+            const isLocked = u.locked_until && new Date(u.locked_until) > new Date();
+
             const tr = document.createElement('tr');
+            if (isLocked) tr.classList.add('table-secondary');
+
             let actionButtons = '';
 
-            // --- [SỬA ĐỔI QUAN TRỌNG Ở ĐÂY] ---
             if (u.id !== currentUserId) {
-                // 1. Cho phép sửa nếu là Own HOẶC (là Admin và đối tượng là User hoặc Guest)
-                // Đã thêm điều kiện u.role === 'guest' vào
                 const canEdit = currentUserRole === 'own' || (currentUserRole === 'admin' && (u.role === 'user' || u.role === 'guest'));
 
                 if (canEdit) {
-                    // 2. Nút "Đổi quyền" chỉ hiện nếu KHÔNG phải Guest và KHÔNG phải Own
+                    const safeName = (u.full_name || u.username).replace(/'/g, "\\'");
+
                     if (u.role !== 'own' && u.role !== 'guest') {
                         const btnClass = u.role === 'admin' ? 'btn-secondary' : 'btn-warning';
                         const btnText = u.role === 'admin' ? 'Hạ User' : 'Lên Admin';
@@ -216,10 +328,22 @@
                                 ${btnText}
                             </button>`;
                     }
-                    
-                    // 3. Nút Xóa và Tin nhắn thì Guest cũng có (vì nằm trong canEdit)
+
+                    // Nút Khoá Tài Khoản
+                    const lockIcon = isLocked ? '<i class="bi bi-unlock-fill"></i>' : '<i class="bi bi-lock-fill"></i>';
+                    const lockClass = isLocked ? 'btn-success' : 'btn-dark';
+                    const lockTitle = isLocked ? 'Mở khoá tài khoản' : 'Khoá tài khoản';
+
+                    // --- [SỬA ĐỔI] TRUYỀN THÊM isLocked VÀO HÀM ---
+                    actionButtons += `
+                        <button class="btn btn-sm ${lockClass} me-1" 
+                            onclick="window.openLockModal(${u.id}, '${safeName}', ${isLocked})" 
+                            title="${lockTitle}">
+                            ${lockIcon}
+                        </button>`;
+
                     actionButtons += `<button class="btn btn-sm btn-danger me-1" onclick="window.deleteUser(${u.id})"><i class="bi bi-trash"></i></button>`;
-                    const safeName = (u.full_name || u.username).replace(/'/g, "\\'");
+
                     actionButtons += `
                         <button class="btn btn-sm btn-info text-white" 
                             onclick="window.openMsgModal(${u.id}, '${safeName}')" 
@@ -231,11 +355,18 @@
                 actionButtons = '<span class="badge bg-secondary">Bạn</span>';
             }
 
+            const statusBadge = isLocked
+                ? '<span class="badge bg-danger ms-2"><i class="bi bi-lock-fill"></i> Locked</span>'
+                : '';
+
             tr.innerHTML = `
               <td class="text-center">
                 <img src="${u.avatar_url || 'https://via.placeholder.com/50'}" class="rounded-circle border" width="40" height="40" style="object-fit: cover;">
               </td>
-              <td class="fw-bold text-dark">${u.full_name || 'Chưa đặt tên'}</td>
+              <td class="fw-bold text-dark">
+                  ${u.full_name || 'Chưa đặt tên'} 
+                  ${statusBadge}
+              </td>
               <td class="text-muted">@${u.username}</td>
               <td>${u.email}</td>
               <td class="text-center">
