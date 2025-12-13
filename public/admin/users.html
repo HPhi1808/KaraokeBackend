@@ -126,6 +126,7 @@
     // --- 1. ĐỊNH NGHĨA CÁC HÀM HÀNH ĐỘNG ---
 
     window.toggleRole = async function (id, currentRole) {
+        // Chỉ cho phép đổi user <-> admin, không đổi guest
         const newRole = currentRole === 'admin' ? 'user' : 'admin';
         if (!confirm(`Bạn muốn đổi quyền user này thành ${newRole.toUpperCase()}?`)) return;
 
@@ -152,23 +153,28 @@
     };
 
     window.openMsgModal = function (userId, userName) {
+        // Điền dữ liệu vào form
         const idInput = document.getElementById('msgUserId');
         const nameInput = document.getElementById('msgUserName');
 
         if (idInput) idInput.value = userId;
         if (nameInput) nameInput.value = userName;
 
+        // Reset form
         document.getElementById('msgTitle').value = '';
         document.getElementById('msgContent').value = '';
 
         const bs = window.bootstrap || (typeof bootstrap !== 'undefined' ? bootstrap : null);
+
         if (bs) {
             const modalEl = document.getElementById('messageModal');
             let modal = bs.Modal.getInstance(modalEl);
-            if (!modal) modal = new bs.Modal(modalEl);
+            if (!modal) {
+                modal = new bs.Modal(modalEl);
+            }
             modal.show();
         } else {
-            alert("Lỗi: Không tìm thấy thư viện Bootstrap JS!");
+            alert("Lỗi: Không tìm thấy thư viện Bootstrap JS! Hãy kiểm tra lại file base.html");
         }
     };
 
@@ -206,22 +212,13 @@
         }
     };
 
-    // --- [SỬA ĐỔI] HÀM MỞ MODAL KHOÁ ---
-    // Thêm tham số isLocked để biết user đang bị khoá hay không
-    window.openLockModal = function (id, name, isLocked) {
+
+    window.openLockModal = function (id, name) {
         document.getElementById('lockUserId').value = id;
         document.getElementById('lockUserName').innerText = name;
 
-        // LOGIC CHỌN MẶC ĐỊNH THÔNG MINH
-        if (isLocked) {
-            // Nếu đang bị khoá -> Chọn sẵn nút "Mở khoá" (value="unlock")
-            const unlockRadio = document.querySelector('input[name="lockDuration"][value="unlock"]');
-            if (unlockRadio) unlockRadio.checked = true;
-        } else {
-            // Nếu đang bình thường -> Chọn sẵn nút "Khoá 24h"
-            const lock24h = document.querySelector('input[name="lockDuration"][value="24h"]');
-            if (lock24h) lock24h.checked = true;
-        }
+        // Reset radio về mặc định 24h
+        document.querySelector('input[name="lockDuration"][value="24h"]').checked = true;
 
         if (typeof bootstrap !== 'undefined') {
             const modalEl = document.getElementById('lockModal');
@@ -230,6 +227,7 @@
         }
     };
 
+    // HÀM MỚI: Gửi lệnh Khoá
     window.submitLock = async function () {
         const userId = document.getElementById('lockUserId').value;
         const duration = document.querySelector('input[name="lockDuration"]:checked').value;
@@ -252,7 +250,7 @@
             const modalEl = document.getElementById('lockModal');
             const modal = bootstrap.Modal.getInstance(modalEl);
             modal.hide();
-            window.initUsers(); 
+            window.initUsers(); // Load lại bảng để thấy icon khoá
         } else {
             alert('Lỗi: ' + (res?.message || 'Thất bại'));
         }
@@ -260,6 +258,7 @@
 
     // --- 2. HÀM INIT CHÍNH ---
     window.initUsers = async function () {
+        // Tìm kiếm
         const searchInput = document.getElementById('searchUser');
         if (searchInput) {
             searchInput.oninput = function (e) {
@@ -271,6 +270,7 @@
             };
         }
 
+        // Tải dữ liệu
         const tbody = document.getElementById('usersTableBody');
         if (!tbody) return;
 
@@ -293,6 +293,7 @@
         tbody.innerHTML = '';
         const list = Array.isArray(data) ? data : (data.users || []);
 
+        // Lấy thông tin người xem hiện tại
         let currentUserId = null;
         let currentUserRole = '';
         try {
@@ -307,9 +308,11 @@
         list.forEach(u => {
             if (u.role === 'own' && currentUserRole !== 'own') return;
 
+            // --- KIỂM TRA KHOÁ
             const isLocked = u.locked_until && new Date(u.locked_until) > new Date();
 
             const tr = document.createElement('tr');
+            // Nếu bị khoá -> Thêm class làm xám dòng đó đi
             if (isLocked) tr.classList.add('table-secondary');
 
             let actionButtons = '';
@@ -330,20 +333,23 @@
                     }
 
                     // Nút Khoá Tài Khoản
-                    const lockIcon = isLocked ? '<i class="bi bi-unlock-fill"></i>' : '<i class="bi bi-lock-fill"></i>';
-                    const lockClass = isLocked ? 'btn-success' : 'btn-dark';
-                    const lockTitle = isLocked ? 'Mở khoá tài khoản' : 'Khoá tài khoản';
+                    if (u.role !== 'guest') {
+                        const lockIcon = isLocked ? '<i class="bi bi-unlock-fill"></i>' : '<i class="bi bi-lock-fill"></i>';
+                        const lockClass = isLocked ? 'btn-success' : 'btn-dark';
+                        const lockTitle = isLocked ? 'Mở khoá tài khoản' : 'Khoá tài khoản';
 
-                    // --- [SỬA ĐỔI] TRUYỀN THÊM isLocked VÀO HÀM ---
-                    actionButtons += `
-                        <button class="btn btn-sm ${lockClass} me-1" 
-                            onclick="window.openLockModal(${u.id}, '${safeName}', ${isLocked})" 
-                            title="${lockTitle}">
-                            ${lockIcon}
-                        </button>`;
+                        actionButtons += `
+                            <button class="btn btn-sm ${lockClass} me-1" 
+                                onclick="window.openLockModal(${u.id}, '${safeName}')" 
+                                title="${lockTitle}">
+                                ${lockIcon}
+                            </button>`;
+                    }
 
+                    // 3. Nút Xóa
                     actionButtons += `<button class="btn btn-sm btn-danger me-1" onclick="window.deleteUser(${u.id})"><i class="bi bi-trash"></i></button>`;
 
+                    // 4. Nút Tin nhắn
                     actionButtons += `
                         <button class="btn btn-sm btn-info text-white" 
                             onclick="window.openMsgModal(${u.id}, '${safeName}')" 
@@ -355,6 +361,7 @@
                 actionButtons = '<span class="badge bg-secondary">Bạn</span>';
             }
 
+            // --- [LOGIC MỚI: ICON TRẠNG THÁI CẠNH TÊN] ---
             const statusBadge = isLocked
                 ? '<span class="badge bg-danger ms-2"><i class="bi bi-lock-fill"></i> Locked</span>'
                 : '';

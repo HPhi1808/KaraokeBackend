@@ -284,19 +284,20 @@ router.post('/sync-password', async (req, res) => {
     }
 });
 
+// --- 7. ĐĂNG NHẬP KHÁCH (GUEST LOGIN) ---
 router.post('/guest-login', async (req, res) => {
     try {
         // 1. Tạo một định danh ngẫu nhiên cho khách
         const randomId = crypto.randomBytes(8).toString('hex');
         const guestUsername = `guest_${randomId}`;
-        const guestEmail = `${guestUsername}@anon.com`; // Email giả
+        const guestEmail = `${guestUsername}@anon.com`;
 
-        // 2. Tạo password ngẫu nhiên (dù khách không dùng để đăng nhập lại)
+        // 2. Tạo password ngẫu nhiên
         const randomPass = crypto.randomBytes(16).toString('hex');
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(randomPass, salt);
 
-        // 3. Lưu khách vào Database (Để có ID mà liên kết với bảng history/likes)
+        // 3.TẠO MỚI khách vào Database
         const newUser = await pool.query(
             `INSERT INTO users (username, password_hash, email, full_name, role) 
              VALUES ($1, $2, $3, $4, 'guest') 
@@ -310,7 +311,7 @@ router.post('/guest-login', async (req, res) => {
         const accessToken = jwt.sign(
             { user_id: user.id, role: 'guest' },
             JWT_SECRET,
-            { expiresIn: '30d' } // Cho khách dùng lâu hơn (30 ngày)
+            { expiresIn: '30m' }
         );
 
         // Tạo Refresh Token
@@ -319,7 +320,13 @@ router.post('/guest-login', async (req, res) => {
         res.json({
             status: 'success',
             message: 'Đăng nhập khách thành công',
-            user,
+            user: {
+                id: user.id,
+                username: user.username,
+                full_name: user.full_name,
+                role: user.role,
+                created_at: user.created_at
+            },
             access_token: accessToken,
             refresh_token: refreshToken
         });
