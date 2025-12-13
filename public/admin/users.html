@@ -23,7 +23,7 @@
                     </tr>
                 </thead>
                 <tbody id="usersTableBody">
-                </tbody>
+                    </tbody>
             </table>
         </div>
     </div>
@@ -53,139 +53,27 @@
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Tiêu đề</label>
-                        <input type="text" class="form-control" id="msgTitle"
-                            placeholder="Ví dụ: Cảnh báo vi phạm cộng đồng" required>
+                        <input type="text" class="form-control" id="msgTitle" placeholder="Ví dụ: Cảnh báo vi phạm" required>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Nội dung chi tiết</label>
-                        <textarea class="form-control" id="msgContent" rows="4" placeholder="Nhập nội dung nhắc nhở..."
-                            required></textarea>
+                        <textarea class="form-control" id="msgContent" rows="4" placeholder="Nhập nội dung..." required></textarea>
                     </div>
                 </form>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Hủy</button>
-                <button type="button" class="btn btn-primary" onclick="submitMessage()">Gửi ngay</button>
+                <button type="button" class="btn btn-primary" onclick="window.submitMessage()">Gửi ngay</button>
             </div>
         </div>
     </div>
 </div>
 
 <script>
-    // Định nghĩa biến toàn cục để lưu role hiện tại
-    let currentRoleGlobal = '';
+    // --- 1. ĐỊNH NGHĨA CÁC HÀM HÀNH ĐỘNG ---
 
-    // Hàm load users từ API
-    async function loadUsers() {
-        const tbody = document.getElementById('usersTableBody');
-        if (!tbody) return;
-
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4"><div class="spinner-border text-primary"></div> Đang tải dữ liệu...</td></tr>';
-
-        const data = await api('/api/admin/users');
-
-        if (!data || data.status === 'error' || data.error) {
-            tbody.innerHTML = `<tr><td colspan="7" class="text-center text-danger py-4">
-                Không tải được dữ liệu<br>${data?.message || data?.error || 'Lỗi kết nối'}
-            </td></tr>`;
-            return;
-        }
-
-        if (Array.isArray(data) && data.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4">Chưa có người dùng nào.</td></tr>';
-            return;
-        }
-
-        tbody.innerHTML = '';
-        const list = Array.isArray(data) ? data : (data.users || []);
-
-        // Lấy thông tin người đang đăng nhập
-        let currentUserId = null;
-        let currentUserRole = '';
-        try {
-            const token = localStorage.getItem('access_token');
-            if (token) {
-                const payload = JSON.parse(atob(token.split('.')[1]));
-                currentUserId = payload.user_id;
-                currentUserRole = payload.role;
-                currentRoleGlobal = currentUserRole; // Lưu lại để dùng nếu cần
-            }
-        } catch (e) { }
-
-        list.forEach(u => {
-            // === LOGIC MỚI: ẨN OWNER NẾU KHÔNG PHẢI LÀ OWNER ===
-            // Nếu người xem không phải là 'own' MÀ user trong danh sách là 'own' -> Bỏ qua
-            if (u.role === 'own' && currentUserRole !== 'own') {
-                return; 
-            }
-
-            const tr = document.createElement('tr');
-            let actionButtons = '';
-
-            // Logic nút bấm
-            if (u.id !== currentUserId) {
-                const canEdit = currentUserRole === 'own' || (currentUserRole === 'admin' && u.role === 'user');
-
-                if (canEdit) {
-                    if (u.role !== 'own') {
-                        const btnClass = u.role === 'admin' ? 'btn-secondary' : 'btn-warning';
-                        const btnText = u.role === 'admin' ? 'Hạ User' : 'Lên Admin';
-                        // Gắn hàm toggleRole vào window bên dưới
-                        actionButtons += `
-                            <button class="btn btn-sm ${btnClass} me-1" onclick="window.toggleRole(${u.id},'${u.role}')">
-                                ${btnText}
-                            </button>`;
-                    }
-
-                    actionButtons += `<button class="btn btn-sm btn-danger" onclick="window.deleteUser(${u.id})"><i class="bi bi-trash"></i></button>`;
-
-                    // Xử lý tên có dấu nháy đơn (ví dụ O'Neil) để tránh lỗi JS
-                    const safeName = (u.full_name || u.username).replace(/'/g, "\\'");
-                    
-                    actionButtons += `
-                        <button class="btn btn-sm btn-info text-white me-1" 
-                        onclick="window.openMsgModal(${u.id}, '${safeName}')" 
-                        title="Gửi tin nhắn">
-                        <i class="bi bi-envelope"></i>
-                    </button>`;
-                }
-            } else {
-                actionButtons = '<span class="badge bg-secondary">Bạn</span>';
-            }
-
-            tr.innerHTML = `
-              <td class="text-center">
-                <img src="${u.avatar_url || 'https://via.placeholder.com/50'}" class="rounded-circle border" width="40" height="40" style="object-fit: cover;">
-              </td>
-              <td class="fw-bold text-dark">${u.full_name || 'Chưa đặt tên'}</td>
-              <td class="text-muted">@${u.username}</td>
-              <td>${u.email}</td>
-              <td class="text-center">
-                <span class="badge ${u.role === 'own' ? 'bg-dark' : u.role === 'admin' ? 'bg-danger' : 'bg-success'}">
-                  ${u.role.toUpperCase()}
-                </span>
-              </td>
-              <td>${new Date(u.created_at).toLocaleDateString('vi-VN')}</td>
-              <td class="text-center">
-                ${actionButtons}
-              </td>
-            `;
-            tbody.appendChild(tr);
-        });
-    }
-
-    // Tìm kiếm
-    document.getElementById('searchUser')?.addEventListener('input', function (e) {
-        const kw = e.target.value.toLowerCase();
-        document.querySelectorAll('#usersTableBody tr').forEach(row => {
-            const text = row.innerText.toLowerCase();
-            row.style.display = text.includes(kw) ? '' : 'none';
-        });
-    });
-
-    // === GẮN CÁC HÀM VÀO WINDOW ĐỂ GỌI ĐƯỢC TỪ HTML (SỬA LỖI KHÔNG CLICK ĐƯỢC) ===
-    
     window.toggleRole = async function(id, currentRole) {
+        // Chỉ cho phép đổi user <-> admin, không đổi guest
         const newRole = currentRole === 'admin' ? 'user' : 'admin';
         if (!confirm(`Bạn muốn đổi quyền user này thành ${newRole.toUpperCase()}?`)) return;
 
@@ -195,7 +83,7 @@
         });
 
         if (res && (res.status === 'success' || res.user)) {
-            loadUsers();
+            window.initUsers(); 
         } else {
             alert('Lỗi: ' + (res?.message || 'Không thể đổi quyền'));
         }
@@ -205,35 +93,22 @@
         if (!confirm('Hành động này không thể hoàn tác. XÓA người dùng này?')) return;
         const res = await api(`/api/admin/users/${id}`, { method: 'DELETE' });
         if (res && res.status === 'success') {
-            loadUsers();
+            window.initUsers();
         } else {
             alert('Lỗi: ' + (res?.message || 'Không xóa được'));
         }
     };
 
     window.openMsgModal = function(userId, userName) {
-        console.log("Opening modal for:", userId, userName); // Debug
-        
-        const userIdInput = document.getElementById('msgUserId');
-        const userNameInput = document.getElementById('msgUserName');
-        
-        if(!userIdInput || !userNameInput) {
-            console.error("Không tìm thấy input trong modal");
-            return;
-        }
-
-        userIdInput.value = userId;
-        userNameInput.value = userName;
+        document.getElementById('msgUserId').value = userId;
+        document.getElementById('msgUserName').value = userName;
         document.getElementById('msgTitle').value = '';
         document.getElementById('msgContent').value = '';
 
-        // Kiểm tra biến bootstrap
         if (typeof bootstrap !== 'undefined') {
             const modalEl = document.getElementById('messageModal');
             const modal = new bootstrap.Modal(modalEl);
             modal.show();
-        } else {
-            alert("Lỗi: Bootstrap JS chưa được load!");
         }
     };
 
@@ -263,7 +138,6 @@
 
         if (res && res.status === 'success') {
             alert('Đã gửi tin nhắn thành công!');
-            // Đóng modal
             const modalEl = document.getElementById('messageModal');
             const modal = bootstrap.Modal.getInstance(modalEl);
             modal.hide();
@@ -272,6 +146,109 @@
         }
     };
 
-    // Chạy hàm load
-    loadUsers();
+    // --- 2. HÀM INIT CHÍNH ---
+    window.initUsers = async function() {
+        // A. Logic tìm kiếm
+        const searchInput = document.getElementById('searchUser');
+        if(searchInput) {
+            searchInput.oninput = function(e) {
+                const kw = e.target.value.toLowerCase();
+                document.querySelectorAll('#usersTableBody tr').forEach(row => {
+                    const text = row.innerText.toLowerCase();
+                    row.style.display = text.includes(kw) ? '' : 'none';
+                });
+            };
+        }
+
+        // B. Logic tải dữ liệu
+        const tbody = document.getElementById('usersTableBody');
+        if (!tbody) return;
+
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4"><div class="spinner-border text-primary"></div> Đang tải dữ liệu...</td></tr>';
+
+        const data = await api('/api/admin/users');
+
+        if (!data || data.status === 'error' || data.error) {
+            tbody.innerHTML = `<tr><td colspan="7" class="text-center text-danger py-4">
+                Không tải được dữ liệu<br>${data?.message || data?.error || 'Lỗi kết nối'}
+            </td></tr>`;
+            return;
+        }
+
+        if (Array.isArray(data) && data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4">Chưa có người dùng nào.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = '';
+        const list = Array.isArray(data) ? data : (data.users || []);
+
+        let currentUserId = null;
+        let currentUserRole = '';
+        try {
+            const token = localStorage.getItem('access_token');
+            if (token) {
+                const payload = JSON.parse(atob(token.split('.')[1]));
+                currentUserId = payload.user_id;
+                currentUserRole = payload.role;
+            }
+        } catch (e) { }
+
+        list.forEach(u => {
+            if (u.role === 'own' && currentUserRole !== 'own') return;
+
+            const tr = document.createElement('tr');
+            let actionButtons = '';
+
+            // --- [SỬA ĐỔI QUAN TRỌNG Ở ĐÂY] ---
+            if (u.id !== currentUserId) {
+                // 1. Cho phép sửa nếu là Own HOẶC (là Admin và đối tượng là User hoặc Guest)
+                // Đã thêm điều kiện u.role === 'guest' vào
+                const canEdit = currentUserRole === 'own' || (currentUserRole === 'admin' && (u.role === 'user' || u.role === 'guest'));
+
+                if (canEdit) {
+                    // 2. Nút "Đổi quyền" chỉ hiện nếu KHÔNG phải Guest và KHÔNG phải Own
+                    if (u.role !== 'own' && u.role !== 'guest') {
+                        const btnClass = u.role === 'admin' ? 'btn-secondary' : 'btn-warning';
+                        const btnText = u.role === 'admin' ? 'Hạ User' : 'Lên Admin';
+                        actionButtons += `
+                            <button class="btn btn-sm ${btnClass} me-1" onclick="window.toggleRole(${u.id},'${u.role}')">
+                                ${btnText}
+                            </button>`;
+                    }
+                    
+                    // 3. Nút Xóa và Tin nhắn thì Guest cũng có (vì nằm trong canEdit)
+                    actionButtons += `<button class="btn btn-sm btn-danger me-1" onclick="window.deleteUser(${u.id})"><i class="bi bi-trash"></i></button>`;
+                    const safeName = (u.full_name || u.username).replace(/'/g, "\\'");
+                    actionButtons += `
+                        <button class="btn btn-sm btn-info text-white" 
+                            onclick="window.openMsgModal(${u.id}, '${safeName}')" 
+                            title="Gửi tin nhắn">
+                            <i class="bi bi-envelope"></i>
+                        </button>`;
+                }
+            } else {
+                actionButtons = '<span class="badge bg-secondary">Bạn</span>';
+            }
+
+            tr.innerHTML = `
+              <td class="text-center">
+                <img src="${u.avatar_url || 'https://via.placeholder.com/50'}" class="rounded-circle border" width="40" height="40" style="object-fit: cover;">
+              </td>
+              <td class="fw-bold text-dark">${u.full_name || 'Chưa đặt tên'}</td>
+              <td class="text-muted">@${u.username}</td>
+              <td>${u.email}</td>
+              <td class="text-center">
+                <span class="badge ${u.role === 'own' ? 'bg-dark' : u.role === 'admin' ? 'bg-danger' : 'bg-success'}">
+                  ${u.role.toUpperCase()}
+                </span>
+              </td>
+              <td>${new Date(u.created_at).toLocaleDateString('vi-VN')}</td>
+              <td class="text-center">${actionButtons}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    };
+
+    window.initUsers();
 </script>

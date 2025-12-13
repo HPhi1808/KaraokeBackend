@@ -6,6 +6,8 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const pool = require('../config/db');
 
+const { verifyToken } = require('../middlewares/auth');
+
 // Kiểm tra Secret Key
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
@@ -13,12 +15,26 @@ if (!JWT_SECRET) {
 }
 
 // Hàm helper tạo Refresh Token
-const generateRefreshToken = async (userId) => {
+const generateRefreshToken = async (userId, role) => {
     const token = crypto.randomBytes(64).toString('hex');
+
+    // 1. Single Session: Xóa token cũ để đảm bảo chỉ đăng nhập 1 nơi
+    await pool.query('DELETE FROM refresh_tokens WHERE user_id = $1', [userId]);
+
+    // 2. Quyết định thời gian hết hạn dựa vào Role
+    let expiryInterval = '90 days'; // Mặc định cho User/Guest
+    
+    if (role === 'admin' || role === 'own') {
+        expiryInterval = '1 day'; // Admin chỉ cho 24h
+    }
+
+    // 3. Thêm mới với thời gian hết hạn cụ thể
     await pool.query(
-        `INSERT INTO refresh_tokens (user_id, token) VALUES ($1, $2)`,
-        [userId, token]
+        `INSERT INTO refresh_tokens (user_id, token, expires_at) 
+         VALUES ($1, $2, NOW() + $3::INTERVAL)`,
+        [userId, token, expiryInterval]
     );
+
     return token;
 };
 
@@ -80,7 +96,8 @@ router.post('/register', async (req, res) => {
 
 // --- 2. ĐĂNG NHẬP (LOGIN) ---
 router.post('/login', async (req, res) => {
-    const { identifier, password } = req.body;
+    // Thêm biến platform từ req.body
+    const { identifier, password, platform } = req.body;
 
     try {
         const result = await pool.query(
@@ -96,17 +113,32 @@ router.post('/login', async (req, res) => {
         const user = result.rows[0];
         const validPassword = await bcrypt.compare(password, user.password_hash);
         if (!validPassword) {
-            return res.status(400).json({ status: 'error', message: 'Sai mật khẩu!',email: user.email });
+            return res.status(400).json({ status: 'error', message: 'Sai mật khẩu!' });
         }
 
-        // Tạo token
+        // === [LOGIC MỚI] CHẶN ADMIN ĐĂNG NHẬP TỪ APP ===
+        if ((user.role === 'admin' || user.role === 'own')) {
+            // Nếu là Admin, bắt buộc phải có cờ platform = 'web_admin'
+            if (platform !== 'web_admin') {
+                // Trả về lỗi 403 Forbidden ngay lập tức
+                // KHÔNG tạo token, KHÔNG ghi vào DB
+                return res.status(403).json({ 
+                    status: 'error', 
+                    message: 'Tài khoản Admin vui lòng đăng nhập trên trang quản trị Web!' 
+                });
+            }
+        }
+        // ===============================================
+
+        // Tạo Access Token
         const accessToken = jwt.sign(
             { user_id: user.id, role: user.role },
             JWT_SECRET,
             { expiresIn: '30m' }
         );
 
-        const refreshToken = await generateRefreshToken(user.id);
+        // Tạo Refresh Token (Truyền thêm Role để tính thời hạn)
+        const refreshToken = await generateRefreshToken(user.id, user.role);
 
         delete user.password_hash;
 
@@ -158,12 +190,18 @@ router.post('/refresh', async (req, res) => {
 // --- 4. LOGOUT ---
 router.post('/logout', async (req, res) => {
     try {
-        if (req.body?.refresh_token) {
-            await pool.query('DELETE FROM refresh_tokens WHERE token = $1', [req.body.refresh_token]);
+        const refresh_token = req.body?.refresh_token;
+
+        // Chỉ xóa nếu Client có gửi token lên
+        if (refresh_token) {
+            await pool.query('DELETE FROM refresh_tokens WHERE token = $1', [refresh_token]);
         }
 
+        // để App yên tâm xóa local data
         res.json({ status: 'success', message: 'Đăng xuất thành công' });
     } catch (err) {
+        console.error("Logout Error:", err);
+        // Vẫn trả về lỗi server để log, nhưng App sẽ không quan tâm lắm
         res.status(500).json({ status: 'error', message: 'Lỗi server khi đăng xuất' });
     }
 });
@@ -172,13 +210,14 @@ router.post('/logout', async (req, res) => {
 router.post('/check-email', async (req, res) => {
     const { email } = req.body;
     try {
-        const user = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+        const user = await pool.query('SELECT id, role FROM users WHERE email = $1', [email]);
 
         // Trả về cấu trúc chuẩn có status để App dễ xử lý
         res.json({
             status: 'success',
             exists: user.rows.length > 0,
-            message: user.rows.length > 0 ? 'Email đã tồn tại' : 'Email chưa tồn tại'
+            message: user.rows.length > 0 ? 'Email đã tồn tại' : 'Email chưa tồn tại',
+            role: user.rows[0].role
         });
     } catch (err) {
         console.error(err);
@@ -237,5 +276,78 @@ router.post('/sync-password', async (req, res) => {
         res.status(500).json({ status: 'error', message: 'Lỗi Server khi đồng bộ' });
     }
 });
+
+router.post('/guest-login', async (req, res) => {
+    try {
+        // 1. Tạo một định danh ngẫu nhiên cho khách
+        const randomId = crypto.randomBytes(8).toString('hex');
+        const guestUsername = `guest_${randomId}`;
+        const guestEmail = `${guestUsername}@anon.com`; // Email giả
+        
+        // 2. Tạo password ngẫu nhiên (dù khách không dùng để đăng nhập lại)
+        const randomPass = crypto.randomBytes(16).toString('hex');
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(randomPass, salt);
+
+        // 3. Lưu khách vào Database (Để có ID mà liên kết với bảng history/likes)
+        const newUser = await pool.query(
+            `INSERT INTO users (username, password_hash, email, full_name, role) 
+             VALUES ($1, $2, $3, $4, 'guest') 
+             RETURNING id, username, email, full_name, role, created_at`,
+            [guestUsername, hashedPassword, guestEmail, 'Khách ghé thăm']
+        );
+
+        const user = newUser.rows[0];
+
+        // 4. Tạo Token cho khách (Role là 'guest')
+        const accessToken = jwt.sign(
+            { user_id: user.id, role: 'guest' },
+            JWT_SECRET,
+            { expiresIn: '30d' } // Cho khách dùng lâu hơn (30 ngày)
+        );
+        
+        // Tạo Refresh Token
+        const refreshToken = await generateRefreshToken(user.id);
+
+        res.json({
+            status: 'success',
+            message: 'Đăng nhập khách thành công',
+            user,
+            access_token: accessToken,
+            refresh_token: refreshToken
+        });
+
+    } catch (err) {
+        console.error("Guest Login Error:", err);
+        res.status(500).json({ status: 'error', message: 'Lỗi tạo tài khoản khách' });
+    }
+});
+
+
+
+// API Xóa tài khoản vĩnh viễn (Dùng để dọn dẹp Guest)
+router.delete('/delete-guest', verifyToken, async (req, res) => {
+    try {
+        const { user_id, role } = req.user; // Lấy thông tin từ Token
+
+        // BƯỚC BẢO MẬT: Kiểm tra xem có đúng là Guest không?
+        if (role !== 'guest') {
+            return res.status(403).json({ 
+                status: 'error', 
+                message: 'Chỉ tài khoản Khách mới được phép sử dụng API này!' 
+            });
+        }
+
+        // Nếu đúng là Guest thì cho phép xóa chính mình
+        await pool.query('DELETE FROM refresh_tokens WHERE user_id = $1', [user_id]);
+        await pool.query('DELETE FROM users WHERE id = $1', [user_id]);
+
+        res.json({ status: 'success', message: 'Đã dọn dẹp tài khoản khách.' });
+    } catch (err) {
+        console.error("Delete Guest Error:", err);
+        res.status(500).json({ status: 'error', message: 'Lỗi server' });
+    }
+});
+
 
 module.exports = router;

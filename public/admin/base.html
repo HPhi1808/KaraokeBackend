@@ -1,4 +1,3 @@
-<!-- public/admin/base.html -->
 <!DOCTYPE html>
 <html lang="vi">
 
@@ -43,15 +42,21 @@
 </head>
 
 <body>
-  <!-- Navbar -->
-  <nav class="navbar navbar-dark shadow">
+  <script>
+    window.addEventListener('pageshow', function (event) {
+      if (!localStorage.getItem('access_token')) {
+        window.location.replace('/');
+      }
+    });
+  </script>
+  <nav class="navbar navbar-dark shadow sticky-top">
     <div class="container-fluid">
       <a class="navbar-brand" href="/admin/base.html">
         <i class="bi bi-mic-fill"></i> Karaoke Admin
       </a>
-      <div class="text-white">
-        Xin chào: <strong id="adminName">Admin</strong>
-        <button class="btn btn-outline-light btn-sm ms-3" onclick="logout()">
+      <div class="text-white d-flex align-items-center">
+        <span class="me-3">Xin chào: <strong id="adminName">Admin</strong></span>
+        <button id="btnLogout" class="btn btn-outline-light btn-sm" onclick="logout()">
           <i class="bi bi-box-arrow-right"></i> Đăng xuất
         </button>
       </div>
@@ -59,11 +64,10 @@
   </nav>
 
   <div class="d-flex">
-    <!-- Sidebar -->
-    <div class="sidebar p-3" style="width: 260px;">
+    <div class="sidebar p-3 d-none d-md-block" style="width: 260px;">
       <ul class="nav flex-column">
         <li class="nav-item">
-          <a class="nav-link active" href="#" onclick="loadPage('users.html')">
+          <a class="nav-link active" href="#" onclick="loadPage('users.html'); return false;">
             <i class="bi bi-people-fill"></i> Quản lý Users
           </a>
         </li>
@@ -85,7 +89,6 @@
       </ul>
     </div>
 
-    <!-- Main Content -->
     <div class="flex-grow-1 p-4 content-area">
       <div id="pageContent">
         <div class="text-center py-5">
@@ -96,43 +99,83 @@
     </div>
   </div>
 
-  <script src="/assets/js/admin.js?t=<%= Date.now() %>"></script>
   <script>
-    let accessToken = localStorage.getItem('access_token');
+    // 1. Kiểm tra đăng nhập ngay lập tức
+    const accessToken = localStorage.getItem('access_token');
+    const refreshToken = localStorage.getItem('refresh_token');
+    const adminName = localStorage.getItem('admin_name');
 
     if (!accessToken) {
-      alert('Chưa đăng nhập!');
+      // SỬA LẠI ĐƯỜNG DẪN: Chuyển về trang gốc '/'
       window.location.href = '/';
     }
 
-    async function api(url, options = {}) {
-      console.log('Gọi API:', url);
-      const res = await fetch(url, {
-        ...options,
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`,
-          ...options.headers
-        }
-      });
-
-      if (res.status === 401 || res.status === 403) {
-        alert('Token hết hạn hoặc không có quyền');
-        localStorage.clear();
-        window.location.href = '/';
-        return null;
-      }
-
-      const data = await res.json();
-      return data;
+    // Hiển thị tên Admin
+    if (adminName) {
+      document.getElementById('adminName').innerText = adminName;
     }
 
+    // --- HÀM ĐĂNG XUẤT (GỌI API XÓA TOKEN) ---
+    async function logout() {
+      const btn = document.getElementById('btnLogout');
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+      btn.disabled = true;
+
+      try {
+        if (refreshToken) {
+          // Gọi API để server xóa token khỏi DB
+          await fetch('/api/auth/logout', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refresh_token: refreshToken })
+          });
+        }
+      } catch (err) {
+        console.error("Lỗi khi gọi API logout:", err);
+      } finally {
+        // Xóa sạch dữ liệu LocalStorage
+        localStorage.clear();
+        window.location.replace('/');
+      }
+    }
+
+    // --- HÀM GỌI API CHUNG (CÓ XỬ LÝ 401/403) ---
+    async function api(url, options = {}) {
+      try {
+        const res = await fetch(url, {
+          ...options,
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${accessToken}`,
+            ...options.headers
+          }
+        });
+
+        if (res.status === 401 || res.status === 403) {
+          // Token hết hạn hoặc không quyền -> Logout
+          localStorage.clear();
+          // SỬA LẠI ĐƯỜNG DẪN: Chuyển về trang gốc '/'
+          window.location.href = '/';
+          return null;
+        }
+
+        const data = await res.json();
+        return data;
+      } catch (err) {
+        console.error("API Error:", err);
+        return null;
+      }
+    }
+
+    // --- HÀM LOAD TRANG CON (SPA) ---
     async function loadPage(page) {
       const content = document.getElementById('pageContent');
-      content.innerHTML = '<div class="text-center py-5"><div class="spinner-border"></div> Đang tải...</div>';
+      content.innerHTML = '<div class="text-center py-5"><div class="spinner-border text-primary"></div><div class="mt-2">Đang tải dữ liệu...</div></div>';
 
       try {
         const res = await fetch(`./${page}`);
+        if (!res.ok) throw new Error("Không tìm thấy trang");
+
         const html = await res.text();
         content.innerHTML = html;
 
@@ -143,27 +186,20 @@
         document.querySelectorAll('.sidebar .nav-link').forEach(l => l.classList.remove('active'));
         document.querySelector(`[onclick="loadPage('${page}')"]`)?.classList.add('active');
 
-        // Chạy script trong trang vừa load
+        // Chạy script trong trang vừa load (Quan trọng để trang con hoạt động)
         const scripts = content.querySelectorAll('script');
         for (const script of scripts) {
           const newScript = document.createElement('script');
           newScript.textContent = script.textContent;
           document.body.appendChild(newScript);
-          script.remove();
+          script.remove(); // Xóa thẻ cũ để tránh rác
         }
-
-        // Gọi hàm init của trang nếu có
-        if (typeof window.initUsers === 'function' && page === 'users.html') {
-          await window.initUsers();
-        }
-        // Sau này làm trang songs.html thì thêm: else if (page === 'songs.html' && window.initSongs) ...
-
-
       } catch (err) {
-        content.innerHTML = '<div class="alert alert-danger">Lỗi tải trang: ' + err.message + '</div>';
+        content.innerHTML = `<div class="alert alert-danger m-4">Lỗi tải trang: ${err.message}</div>`;
       }
     }
 
+    // Mặc định load trang Users đầu tiên
     loadPage('users.html');
   </script>
 </body>

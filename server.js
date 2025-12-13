@@ -8,17 +8,34 @@ const { verifyToken, requireAdmin } = require('./middlewares/auth');
 const app = express();
 const port = process.env.PORT || 3000;
 
+const noCache = (req, res, next) => {
+    res.header('Cache-Control', 'private, no-cache, no-store, must-revalidate');
+    res.header('Expires', '-1');
+    res.header('Pragma', 'no-cache');
+    next();
+};
+
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+app.use(express.static(path.join(__dirname, 'public'), {
+    setHeaders: function (res, path) {
+        if (path.endsWith('.html')) {
+            res.header('Cache-Control', 'private, no-cache, no-store, must-revalidate');
+            res.header('Expires', '-1');
+            res.header('Pragma', 'no-cache');
+        }
+    }
+}));
 
 // Phục vụ các trang admin riêng
 app.use('/admin', express.static(path.join(__dirname, 'public/admin')));
 app.use('/assets', express.static(path.join(__dirname, 'public/assets')));
 
 // Trang login
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'login.html'));
+app.get('/', noCache, (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 
 // Vào thẳng base khi gõ /admin
